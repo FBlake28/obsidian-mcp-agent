@@ -136,5 +136,33 @@ _read_note_template = _SlashTolerantResourceTemplate.from_function(
 mcp._resource_manager._templates[_read_note_template.uri_template] = _read_note_template
 
 
+@mcp.resource("vault://templates")
+def list_templates() -> list[str]:
+    """List filenames found at the top level of 07-Templates (no recursion)."""
+    templates_dir = resolve_vault_path("07-Templates")
+    return sorted(entry.name for entry in templates_dir.iterdir() if entry.is_file())
+
+
+def read_template(name: str) -> str:
+    """Return the full raw contents of a template file in 07-Templates."""
+    return resolve_vault_path(f"07-Templates/{name}").read_text(encoding="utf-8")
+
+
+_read_template_template = _SlashTolerantResourceTemplate.from_function(
+    read_template,
+    uri_template="vault://template/{name}",
+    name="read_template",
+    description=read_template.__doc__,
+)
+mcp._resource_manager._templates[_read_template_template.uri_template] = _read_template_template
+
+
+@mcp.resource("vault://tags")
+def list_tags() -> list[str]:
+    """List bare tag names found at the top level of 05-Tags (no recursion)."""
+    tags_dir = resolve_vault_path("05-Tags")
+    return sorted(entry.stem for entry in tags_dir.iterdir() if entry.suffix == ".md")
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
