@@ -164,5 +164,28 @@ def list_tags() -> list[str]:
     return sorted(entry.stem for entry in tags_dir.iterdir() if entry.suffix == ".md")
 
 
+@mcp.resource("vault://inbox")
+def list_inbox() -> list[str]:
+    """List filenames found at the top level of 99-Unsorted, excluding _processed (no recursion)."""
+    inbox_dir = resolve_vault_path("99-Unsorted")
+    return sorted(
+        entry.name for entry in inbox_dir.iterdir() if entry.is_file() and entry.name != "_processed"
+    )
+
+
+def read_inbox_note(filename: str) -> str:
+    """Return the full raw contents of a note in 99-Unsorted."""
+    return resolve_vault_path(f"99-Unsorted/{filename}").read_text(encoding="utf-8")
+
+
+_read_inbox_note_template = _SlashTolerantResourceTemplate.from_function(
+    read_inbox_note,
+    uri_template="vault://inbox/{filename}",
+    name="read_inbox_note",
+    description=read_inbox_note.__doc__,
+)
+mcp._resource_manager._templates[_read_inbox_note_template.uri_template] = _read_inbox_note_template
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
