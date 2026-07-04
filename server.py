@@ -221,5 +221,23 @@ def write_note(folder: str, filename: str, content: str) -> dict:
     }
 
 
+@mcp.tool()
+def archive_inbox_note(filename: str) -> dict:
+    """Move a processed note from 99-Unsorted/ to 99-Unsorted/_processed/."""
+    source_path = resolve_vault_path(f"99-Unsorted/{filename}")
+    if not source_path.is_file():
+        return {"status": "error", "message": f"{filename} does not exist in the backlog."}
+
+    destination_dir = resolve_vault_path("99-Unsorted/_processed")
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    destination_path = destination_dir / source_path.name
+    source_path.rename(destination_path)
+
+    return {
+        "status": "moved",
+        "new_path": destination_path.relative_to(VAULT_ROOT).as_posix(),
+    }
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
