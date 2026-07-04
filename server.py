@@ -1,8 +1,11 @@
 import os
 import re
 from pathlib import Path
+from typing import Any
+from urllib.parse import unquote
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.resources.templates import ResourceTemplate
 
 mcp = FastMCP("obsidian-mcp-agent")
 
@@ -37,6 +40,22 @@ EXCLUDED_TOP_LEVEL_FOLDERS = {
     "05-Tags",
     "00-Indexes",
 }
+
+
+class _SlashTolerantResourceTemplate(ResourceTemplate):
+    """A ResourceTemplate whose placeholders may contain '/', for relative file paths.
+
+    The base implementation builds its matching regex with `[^/]+` per placeholder,
+    which cannot capture multi-segment paths like '01-Learning/GenAI/RAG.md'.
+    """
+
+    def matches(self, uri: str) -> dict[str, Any] | None:
+        pattern = self.uri_template.replace("{", "(?P<").replace("}", ">.+)")
+        match = re.match(f"^{pattern}$", uri)
+        if not match:
+            return None
+        return {key: unquote(value) for key, value in match.groupdict().items()}
+
 
 _ABSTRACT_HEADING_RE = re.compile(r"^##\s*abstract\s*$", re.IGNORECASE)
 
@@ -87,10 +106,34 @@ def list_vault_notes() -> list[dict[str, str]]:
     return _list_vault_notes(None)
 
 
-@mcp.resource("vault://notes/{folder}", name="list_vault_notes")
 def list_vault_notes_in_folder(folder: str) -> list[dict[str, str]]:
     """List vault notes under a specific folder (recursively) with their Abstract section text."""
     return _list_vault_notes(folder)
+
+
+_list_vault_notes_in_folder_template = _SlashTolerantResourceTemplate.from_function(
+    list_vault_notes_in_folder,
+    uri_template="vault://notes/{folder}",
+    name="list_vault_notes",
+    description=list_vault_notes_in_folder.__doc__,
+)
+mcp._resource_manager._templates[_list_vault_notes_in_folder_template.uri_template] = (
+    _list_vault_notes_in_folder_template
+)
+
+
+def read_note(path: str) -> str:
+    """Return the full raw contents of a vault note at the given relative path."""
+    return resolve_vault_path(path).read_text(encoding="utf-8")
+
+
+_read_note_template = _SlashTolerantResourceTemplate.from_function(
+    read_note,
+    uri_template="vault://note/{path}",
+    name="read_note",
+    description=read_note.__doc__,
+)
+mcp._resource_manager._templates[_read_note_template.uri_template] = _read_note_template
 
 
 if __name__ == "__main__":
