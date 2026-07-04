@@ -187,5 +187,39 @@ _read_inbox_note_template = _SlashTolerantResourceTemplate.from_function(
 mcp._resource_manager._templates[_read_inbox_note_template.uri_template] = _read_inbox_note_template
 
 
+_INVALID_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*]')
+
+
+def _sanitize_filename(filename: str) -> str:
+    cleaned = _INVALID_FILENAME_CHARS_RE.sub("", filename).strip()
+    if not cleaned.lower().endswith(".md"):
+        cleaned += ".md"
+    return cleaned
+
+
+@mcp.tool()
+def write_note(folder: str, filename: str, content: str) -> dict:
+    """Create a new note in the vault, refusing to overwrite a note with the same filename elsewhere."""
+    sanitized_filename = _sanitize_filename(filename)
+
+    for note in _list_vault_notes(None):
+        if Path(note["path"]).name.lower() == sanitized_filename.lower():
+            return {
+                "status": "conflict",
+                "existing_path": note["path"],
+                "drafted_content": content,
+            }
+
+    target_dir = resolve_vault_path(folder)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / sanitized_filename
+    target_path.write_text(content, encoding="utf-8")
+
+    return {
+        "status": "written",
+        "path": target_path.relative_to(VAULT_ROOT).as_posix(),
+    }
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
