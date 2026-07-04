@@ -1,15 +1,16 @@
 import os
 import re
 from pathlib import Path
-from typing import Any
-from urllib.parse import unquote
 
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.resources.templates import ResourceTemplate
 
 mcp = FastMCP("obsidian-mcp-agent")
 
-VAULT_ROOT = Path(r"E:\Obsidian Vault").resolve()
+if "OBSIDIAN_VAULT_PATH" not in os.environ:
+    raise RuntimeError(
+        "OBSIDIAN_VAULT_PATH must be set to the absolute path of your Obsidian vault."
+    )
+VAULT_ROOT = Path(os.environ["OBSIDIAN_VAULT_PATH"]).resolve()
 
 
 def resolve_vault_path(relative_path: str) -> Path:
@@ -26,11 +27,18 @@ def ping() -> str:
     return "pong"
 
 
-@mcp.resource("guide://folder-structure")
+@mcp.tool()
 def read_folder_guide() -> str:
     """Return the full text contents of folder-guide.md."""
     guide_path = Path(__file__).parent / "folder-guide.md"
     return guide_path.read_text(encoding="utf-8")
+
+
+@mcp.tool()
+def read_processing_instructions() -> str:
+    """Return the full text contents of processing-instructions.md."""
+    instructions_path = Path(__file__).parent / "processing-instructions.md"
+    return instructions_path.read_text(encoding="utf-8")
 
 
 EXCLUDED_TOP_LEVEL_FOLDERS = {
@@ -40,21 +48,6 @@ EXCLUDED_TOP_LEVEL_FOLDERS = {
     "05-Tags",
     "00-Indexes",
 }
-
-
-class _SlashTolerantResourceTemplate(ResourceTemplate):
-    """A ResourceTemplate whose placeholders may contain '/', for relative file paths.
-
-    The base implementation builds its matching regex with `[^/]+` per placeholder,
-    which cannot capture multi-segment paths like '01-Learning/GenAI/RAG.md'.
-    """
-
-    def matches(self, uri: str) -> dict[str, Any] | None:
-        pattern = self.uri_template.replace("{", "(?P<").replace("}", ">.+)")
-        match = re.match(f"^{pattern}$", uri)
-        if not match:
-            return None
-        return {key: unquote(value) for key, value in match.groupdict().items()}
 
 
 _ABSTRACT_HEADING_RE = re.compile(r"^##\s*abstract\s*$", re.IGNORECASE)
@@ -100,71 +93,45 @@ def _list_vault_notes(folder: str | None) -> list[dict[str, str]]:
     return notes
 
 
-@mcp.resource("vault://notes", name="list_vault_notes")
+@mcp.tool()
 def list_vault_notes() -> list[dict[str, str]]:
     """List all vault notes (recursively) with their Abstract section text."""
     return _list_vault_notes(None)
 
 
+@mcp.tool()
 def list_vault_notes_in_folder(folder: str) -> list[dict[str, str]]:
     """List vault notes under a specific folder (recursively) with their Abstract section text."""
     return _list_vault_notes(folder)
 
 
-_list_vault_notes_in_folder_template = _SlashTolerantResourceTemplate.from_function(
-    list_vault_notes_in_folder,
-    uri_template="vault://notes/{folder}",
-    name="list_vault_notes",
-    description=list_vault_notes_in_folder.__doc__,
-)
-mcp._resource_manager._templates[_list_vault_notes_in_folder_template.uri_template] = (
-    _list_vault_notes_in_folder_template
-)
-
-
+@mcp.tool()
 def read_note(path: str) -> str:
     """Return the full raw contents of a vault note at the given relative path."""
     return resolve_vault_path(path).read_text(encoding="utf-8")
 
 
-_read_note_template = _SlashTolerantResourceTemplate.from_function(
-    read_note,
-    uri_template="vault://note/{path}",
-    name="read_note",
-    description=read_note.__doc__,
-)
-mcp._resource_manager._templates[_read_note_template.uri_template] = _read_note_template
-
-
-@mcp.resource("vault://templates")
+@mcp.tool()
 def list_templates() -> list[str]:
     """List filenames found at the top level of 07-Templates (no recursion)."""
     templates_dir = resolve_vault_path("07-Templates")
     return sorted(entry.name for entry in templates_dir.iterdir() if entry.is_file())
 
 
+@mcp.tool()
 def read_template(name: str) -> str:
     """Return the full raw contents of a template file in 07-Templates."""
     return resolve_vault_path(f"07-Templates/{name}").read_text(encoding="utf-8")
 
 
-_read_template_template = _SlashTolerantResourceTemplate.from_function(
-    read_template,
-    uri_template="vault://template/{name}",
-    name="read_template",
-    description=read_template.__doc__,
-)
-mcp._resource_manager._templates[_read_template_template.uri_template] = _read_template_template
-
-
-@mcp.resource("vault://tags")
+@mcp.tool()
 def list_tags() -> list[str]:
     """List bare tag names found at the top level of 05-Tags (no recursion)."""
     tags_dir = resolve_vault_path("05-Tags")
     return sorted(entry.stem for entry in tags_dir.iterdir() if entry.suffix == ".md")
 
 
-@mcp.resource("vault://inbox")
+@mcp.tool()
 def list_inbox() -> list[str]:
     """List filenames found at the top level of 99-Unsorted, excluding _processed (no recursion)."""
     inbox_dir = resolve_vault_path("99-Unsorted")
@@ -173,18 +140,10 @@ def list_inbox() -> list[str]:
     )
 
 
+@mcp.tool()
 def read_inbox_note(filename: str) -> str:
     """Return the full raw contents of a note in 99-Unsorted."""
     return resolve_vault_path(f"99-Unsorted/{filename}").read_text(encoding="utf-8")
-
-
-_read_inbox_note_template = _SlashTolerantResourceTemplate.from_function(
-    read_inbox_note,
-    uri_template="vault://inbox/{filename}",
-    name="read_inbox_note",
-    description=read_inbox_note.__doc__,
-)
-mcp._resource_manager._templates[_read_inbox_note_template.uri_template] = _read_inbox_note_template
 
 
 _INVALID_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*]')
@@ -219,6 +178,18 @@ def write_note(folder: str, filename: str, content: str) -> dict:
         "status": "written",
         "path": target_path.relative_to(VAULT_ROOT).as_posix(),
     }
+
+
+@mcp.tool()
+def update_note(path: str, content: str) -> dict:
+    """Overwrite the full content of an existing note. Never creates new files."""
+    target_path = resolve_vault_path(path)
+    if not target_path.is_file():
+        return {"status": "error", "message": f"{path} does not exist — use write_note to create a new note."}
+
+    target_path.write_text(content, encoding="utf-8")
+
+    return {"status": "updated", "path": path}
 
 
 @mcp.tool()
